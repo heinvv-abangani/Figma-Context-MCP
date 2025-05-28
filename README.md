@@ -125,6 +125,281 @@ curl -X POST https://figma-context-mcp-fre3.onrender.com/mcp \
   }'
 ```
 
+## Server-Sent Events (SSE) Integration
+
+The deployed MCP server supports both **StreamableHTTP** (`/mcp`) and **Server-Sent Events** (`/sse`) transport methods for real-time communication.
+
+**🔐 Session Management**: The deployed server requires proper session management for both transport methods. This is handled automatically by the integration code below.
+
+### SSE Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/sse` | GET | Establish SSE connection (creates session automatically) |
+| `/messages?sessionId=<id>` | POST | Send MCP messages via SSE using session ID |
+
+### Session Management Flow
+
+#### SSE Transport (Recommended)
+1. **GET `/sse`**: Automatically creates session and returns session ID
+2. **Extract Session ID**: Parse session ID from SSE response
+3. **POST `/messages?sessionId=<id>`**: Send MCP requests using the session
+
+#### StreamableHTTP Transport (Fallback)
+1. **POST `/mcp`** with `initialize` request: Creates new session
+2. **Extract Session ID**: Get session ID from `mcp-session-id` header  
+3. **POST `/mcp`** with `mcp-session-id` header: Send subsequent requests
+
+### SSE Usage Example with Session Management
+
+```javascript
+// Complete SSE integration with session management
+async function fetchFromDeployedMCP(fileKey, nodeId) {
+  const mcpPayload = {
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    params: {
+      name: 'get_figma_data',
+      arguments: { fileKey, ...(nodeId && { nodeId }) }
+    },
+    id: Date.now(),
+  };
+
+  try {
+    // Step 1: Establish SSE connection (creates session automatically)
+    const sseResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/sse', {
+      method: 'GET',
+      headers: {
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'User-Agent': 'your-app/1.0',
+      },
+    });
+
+    if (!sseResponse.ok) {
+      throw new Error(`SSE connection failed: ${sseResponse.status}`);
+    }
+
+    // Step 2: Extract session ID from SSE response
+    const responseText = await sseResponse.text();
+    const sessionIdMatch = responseText.match(/data: {"sessionId":"([^"]+)"/);
+    
+    if (!sessionIdMatch) {
+      throw new Error('Could not extract session ID from SSE response');
+    }
+    
+    const sessionId = sessionIdMatch[1];
+
+    // Step 3: Send MCP message using the session ID
+    const messageResponse = await fetch(`https://figma-context-mcp-fre3.onrender.com/messages?sessionId=${sessionId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'your-app/1.0',
+      },
+      body: JSON.stringify(mcpPayload),
+    });
+
+    if (!messageResponse.ok) {
+      throw new Error(`SSE message failed: ${messageResponse.status}`);
+    }
+
+    const result = await messageResponse.json();
+    
+    if (result.error) {
+      throw new Error(`Figma-Context-MCP error: ${result.error.message}`);
+    }
+
+    return result.result || result;
+
+  } catch (error) {
+    console.warn('SSE method failed, falling back to StreamableHTTP:', error);
+    return await fetchViaHTTP(fileKey, nodeId);
+  }
+}
+```
+
+### CORS Configuration
+
+The server is pre-configured with CORS support for:
+
+- **Local Development**: `localhost:3000`, `localhost:3001`, `localhost:8080`
+- **Cursor IDE**: `https://cursor.sh`, `https://www.cursor.sh`
+- **Custom Origins**: Add your domain to the allowedOrigins array
+
+#### Adding Custom CORS Origins
+
+To add your application's domain, modify `src/server.ts`:
+
+```typescript
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001', 
+  'http://localhost:8080',
+  'https://cursor.sh',
+  'https://www.cursor.sh',
+  'https://your-app-domain.com',  // Add your domain here
+];
+```
+
+### Transport Method Selection
+
+**Recommended Approach**: Use SSE with HTTP fallback for maximum reliability:
+
+```javascript
+async function fetchFromFigmaMCP(fileKey, nodeId) {
+  try {
+    // Try SSE first (real-time, efficient)
+    return await fetchViaSSE(fileKey, nodeId);
+  } catch (error) {
+    console.warn('SSE failed, falling back to HTTP');
+    // Fallback to StreamableHTTP (reliable, standard)
+    return await fetchViaHTTP(fileKey, nodeId);
+  }
+}
+
+async function fetchViaSSE(fileKey, nodeId) {
+  // Establish SSE connection
+  const sseResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/sse', {
+    method: 'GET',
+    headers: {
+      'Accept': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+
+  if (!sseResponse.ok) {
+    throw new Error(`SSE connection failed: ${sseResponse.status}`);
+  }
+
+  // Send message via SSE
+  const mcpPayload = {
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    params: {
+      name: 'get_figma_data',
+      arguments: { fileKey, ...(nodeId && { nodeId }) },
+    },
+    id: Date.now(),
+  };
+
+  const messageResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(mcpPayload),
+  });
+
+  if (!messageResponse.ok) {
+    throw new Error(`SSE message failed: ${messageResponse.status}`);
+  }
+
+  return await messageResponse.json();
+}
+
+async function fetchViaHTTP(fileKey, nodeId) {
+  // Step 1: Initialize session with deployed server
+  const initPayload = {
+    jsonrpc: '2.0',
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'your-app',
+        version: '1.0.0',
+      },
+    },
+    id: 1,
+  };
+
+  const initResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/mcp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'your-app/1.0',
+      'Origin': 'https://your-app.com',
+    },
+    body: JSON.stringify(initPayload),
+  });
+
+  if (!initResponse.ok) {
+    throw new Error(`Failed to initialize session: ${initResponse.status}`);
+  }
+
+  // Step 2: Extract session ID from response headers
+  const sessionId = initResponse.headers.get('mcp-session-id');
+  if (!sessionId) {
+    throw new Error('No session ID received from initialization');
+  }
+
+  // Step 3: Make the actual request with session ID
+  const mcpPayload = {
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    params: {
+      name: 'get_figma_data',
+      arguments: { fileKey, ...(nodeId && { nodeId }) },
+    },
+    id: Date.now(),
+  };
+
+  const response = await fetch('https://figma-context-mcp-fre3.onrender.com/mcp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'your-app/1.0',
+      'mcp-session-id': sessionId,
+      'Origin': 'https://your-app.com',
+    },
+    body: JSON.stringify(mcpPayload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP request failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+  
+  if (data.error) {
+    throw new Error(`Figma-Context-MCP error: ${data.error.message}`);
+  }
+
+  return data.result || data;
+}
+```
+
+### Authentication & Headers
+
+**Required Headers for External Integration**:
+
+```javascript
+const headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'User-Agent': 'your-app-name/version',
+  'Origin': 'https://your-domain.com',  // Important for CORS
+};
+```
+
+**For SSE connections**:
+
+```javascript
+const sseHeaders = {
+  'Accept': 'text/event-stream',
+  'Cache-Control': 'no-cache',
+  'Connection': 'keep-alive',
+  'User-Agent': 'your-app-name/version',
+};
+```
+
 ## ChatGPT Integration for Figma to Elementor Workflow
 
 This MCP server can be integrated into a ChatGPT application to create a powerful Figma-to-Elementor conversion workflow.
@@ -174,17 +449,97 @@ const FigmaToElementorApp = () => {
 
 #### 2. **Backend API Routes**
 
-**`/api/figma-mcp`** - Proxy to Figma MCP Server
+**`/api/figma-mcp`** - Proxy to Figma MCP Server (SSE with HTTP fallback)
 ```javascript
 export default async function handler(req, res) {
-  const response = await fetch(`${process.env.FIGMA_MCP_URL}/mcp`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req.body)
-  });
-  
-  const data = await response.json();
-  res.json(data);
+  try {
+    // Try SSE first with session management
+    const sseResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/sse', {
+      method: 'GET',
+      headers: {
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'User-Agent': 'chatgpt-figma-app/1.0',
+      },
+    });
+
+    if (sseResponse.ok) {
+      // Extract session ID from SSE response
+      const responseText = await sseResponse.text();
+      const sessionIdMatch = responseText.match(/data: {"sessionId":"([^"]+)"/);
+      
+      if (sessionIdMatch) {
+        const sessionId = sessionIdMatch[1];
+        
+        // Send via SSE with session ID
+        const messageResponse = await fetch(`https://figma-context-mcp-fre3.onrender.com/messages?sessionId=${sessionId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'chatgpt-figma-app/1.0',
+          },
+          body: JSON.stringify(req.body),
+        });
+        
+        if (messageResponse.ok) {
+          const data = await messageResponse.json();
+          return res.json(data);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('SSE failed, falling back to HTTP:', error);
+  }
+
+  // Fallback to StreamableHTTP with session management
+  try {
+    // Initialize session
+    const initPayload = {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'chatgpt-figma-app', version: '1.0.0' },
+      },
+      id: 1,
+    };
+
+    const initResponse = await fetch('https://figma-context-mcp-fre3.onrender.com/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Origin': process.env.NEXTAUTH_URL || 'http://localhost:3000',
+      },
+      body: JSON.stringify(initPayload),
+    });
+
+    const sessionId = initResponse.headers.get('mcp-session-id');
+    
+    if (sessionId) {
+      // Make request with session ID
+      const response = await fetch('https://figma-context-mcp-fre3.onrender.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'mcp-session-id': sessionId,
+          'Origin': process.env.NEXTAUTH_URL || 'http://localhost:3000',
+        },
+        body: JSON.stringify(req.body),
+      });
+      
+      const data = await response.json();
+      return res.json(data);
+    }
+  } catch (error) {
+    console.error('HTTP fallback failed:', error);
+  }
+
+  res.status(500).json({ error: 'Failed to connect to Figma MCP server' });
 }
 ```
 
@@ -336,14 +691,193 @@ Example output format:
 - Check Render.com logs for detailed error messages
 - Verify FIGMA_API_KEY is properly set (45 characters, starts with "figd_")
 
-### Next Steps for ChatGPT App
+### SSE Integration Troubleshooting
 
-1. **Create React/Next.js frontend** with Figma URL input
-2. **Implement ChatGPT processing** for design conversion
+#### Common SSE Issues & Solutions
+
+**1. CORS Errors**
+```
+Access to fetch at 'https://figma-context-mcp-fre3.onrender.com/sse' from origin 'https://your-app.com' has been blocked by CORS policy
+```
+**Solution**: Add your domain to the CORS allowedOrigins in `src/server.ts`:
+```typescript
+const allowedOrigins = [
+  // ... existing origins
+  'https://your-app.com',
+];
+```
+
+**2. SSE Connection Fails**
+```
+SSE connection failed: 404 Not Found
+```
+**Solution**: Ensure you're using the correct SSE endpoint:
+- ✅ Correct: `https://figma-context-mcp-fre3.onrender.com/sse`
+- ❌ Wrong: `https://figma-context-mcp-fre3.onrender.com/mcp`
+
+**3. Authentication Issues**
+```
+Error: Failed to fetch from Figma-Context-MCP: 401 Unauthorized
+```
+**Solution**: The deployed server handles Figma API authentication internally. Ensure:
+- The server's `FIGMA_API_KEY` environment variable is set
+- Your requests include proper headers:
+```javascript
+headers: {
+  'User-Agent': 'your-app/1.0',
+  'Origin': 'https://your-domain.com',
+}
+```
+
+**4. Session Management Issues**
+```
+Error: Bad Request: No valid session ID provided
+```
+**Solution**: The deployed server requires session management. Ensure you:
+- Initialize sessions properly for StreamableHTTP transport
+- Extract session IDs from SSE connections
+- Include session IDs in subsequent requests
+
+**For SSE**: Extract session ID from response text:
+```javascript
+const responseText = await sseResponse.text();
+const sessionIdMatch = responseText.match(/data: {"sessionId":"([^"]+)"/);
+const sessionId = sessionIdMatch[1];
+```
+
+**For StreamableHTTP**: Initialize session first:
+```javascript
+// Send initialize request
+const initResponse = await fetch('/mcp', { /* initialize payload */ });
+const sessionId = initResponse.headers.get('mcp-session-id');
+
+// Use session ID in subsequent requests
+headers: { 'mcp-session-id': sessionId }
+```
+
+**5. Message Format Errors**
+```
+Error: Invalid JSON-RPC 2.0 format
+```
+**Solution**: Ensure your MCP payload follows the correct format:
+```javascript
+const mcpPayload = {
+  jsonrpc: '2.0',                    // Required
+  method: 'tools/call',              // Required
+  params: {                          // Required
+    name: 'get_figma_data',
+    arguments: { fileKey: 'abc123' }
+  },
+  id: Date.now(),                    // Required, must be unique
+};
+```
+
+**6. Figma File Access Issues**
+```
+Error: 400 Bad Request - File not found
+```
+**Solution**: 
+- Ensure the Figma file is public or accessible with the server's API key
+- Verify the file key format: `z8nv6p3cbJCgTp7hbHXGil` (not the full URL)
+- Test with the debug endpoint: `https://figma-context-mcp-fre3.onrender.com/api/debug-figma`
+
+#### Testing SSE Connection
+
+```bash
+# Test SSE endpoint
+curl -N -H "Accept: text/event-stream" \
+  https://figma-context-mcp-fre3.onrender.com/sse
+
+# Test message sending
+curl -X POST https://figma-context-mcp-fre3.onrender.com/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_figma_data",
+      "arguments": {"fileKey": "test-file-key"}
+    },
+    "id": 1
+  }'
+```
+
+#### External MCP Server Integration
+
+If you're building an external MCP server that connects to this deployed server:
+
+**1. Use the SSE Transport Pattern**:
+```typescript
+// In your external MCP server
+async function fetchFromDeployedMCP(fileKey: string) {
+  try {
+    // Try SSE first
+    return await fetchViaSSE(fileKey);
+  } catch (error) {
+    // Fallback to HTTP
+    return await fetchViaHTTP(fileKey);
+  }
+}
+```
+
+**2. Handle CORS Properly**:
+```typescript
+const headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json',
+  'User-Agent': 'your-mcp-server/1.0',
+  'Origin': 'https://your-server-domain.com',
+};
+```
+
+**3. Implement Proper Error Handling**:
+```typescript
+if (data.error) {
+  throw new Error(`Figma-Context-MCP error: ${data.error.message || JSON.stringify(data.error)}`);
+}
+
+return data.result || data;
+```
+
+#### Performance Optimization
+
+**For High-Volume Usage**:
+- Use SSE for real-time applications (ChatGPT, live editors)
+- Use HTTP for batch processing or simple integrations
+- Implement request caching for frequently accessed files
+- Add retry logic with exponential backoff
+
+**Rate Limiting Considerations**:
+- The server respects Figma API rate limits
+- Implement client-side throttling for multiple requests
+- Cache responses when possible to reduce API calls
+
+### Next Steps for ChatGPT App Development
+
+1. **Create React/Next.js frontend** with Figma URL input and SSE integration
+2. **Implement ChatGPT processing** for design conversion using the SSE transport
 3. **Build Elementor MCP server** for widget deployment
 4. **Add authentication** for Elementor site access
 5. **Implement preview functionality** before deployment
-6. **Add error handling** for failed conversions
+6. **Add error handling** for failed conversions and transport fallbacks
+7. **Set up CORS** for your application domain in the deployed server
+8. **Implement caching** for frequently accessed Figma files
+9. **Add monitoring** for SSE connection health and fallback usage
+
+### Production Checklist
+
+Before deploying your ChatGPT application:
+
+- [ ] **CORS Configuration**: Add your domain to the MCP server's allowedOrigins
+- [ ] **Session Management**: Implement proper session handling for both SSE and HTTP transports
+- [ ] **Error Handling**: Implement SSE with HTTP fallback pattern
+- [ ] **Rate Limiting**: Add client-side throttling for Figma API requests
+- [ ] **Caching**: Cache Figma responses to reduce API calls
+- [ ] **Monitoring**: Set up logging for transport method usage and session management
+- [ ] **Testing**: Test both SSE and HTTP transport methods with session management
+- [ ] **Authentication**: Verify session creation and management works correctly
+- [ ] **Fallback Logic**: Ensure graceful degradation between transport methods
+- [ ] **Documentation**: Document your integration patterns for your team
 
 ## Getting Started
 
