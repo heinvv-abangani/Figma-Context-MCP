@@ -58,6 +58,8 @@ Reducing the amount of context provided to the model helps make the AI more accu
 
 This MCP server is now **production-ready** and can be deployed to cloud platforms like Render.com, Heroku, or any Node.js hosting service.
 
+**🚀 Live Deployment**: This server is currently deployed at: **https://figma-context-mcp-fre3.onrender.com**
+
 ### ✅ Deployment Features
 
 - **Health Check Endpoints**: `/health` for monitoring
@@ -92,6 +94,36 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 | `/mcp` | POST | MCP StreamableHTTP endpoint |
 | `/sse` | GET | Server-Sent Events endpoint |
 | `/messages` | POST | SSE message handling |
+
+**Test the live deployment:**
+- Health Check: https://figma-context-mcp-fre3.onrender.com/health
+- Status: https://figma-context-mcp-fre3.onrender.com/api/status
+- Debug: https://figma-context-mcp-fre3.onrender.com/api/debug-figma
+
+### Testing the Deployed MCP Server
+
+You can test the deployed server directly using curl or any HTTP client:
+
+```bash
+# Health check
+curl https://figma-context-mcp-fre3.onrender.com/health
+
+# Service status
+curl https://figma-context-mcp-fre3.onrender.com/api/status
+
+# MCP endpoint (requires proper JSON-RPC 2.0 format)
+curl -X POST https://figma-context-mcp-fre3.onrender.com/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_figma_data",
+      "arguments": {"fileKey": "your-figma-file-key"}
+    },
+    "id": 1
+  }'
+```
 
 ## ChatGPT Integration for Figma to Elementor Workflow
 
@@ -201,8 +233,8 @@ export default async function handler(req, res) {
 #### 3. **Environment Variables for ChatGPT App**
 
 ```env
-# Figma MCP Server (this deployed server)
-FIGMA_MCP_URL=https://your-figma-mcp.onrender.com
+# Figma MCP Server (deployed server)
+FIGMA_MCP_URL=https://figma-context-mcp-fre3.onrender.com
 
 # Elementor MCP Server (to be built)
 ELEMENTOR_MCP_URL=https://your-elementor-mcp.onrender.com
