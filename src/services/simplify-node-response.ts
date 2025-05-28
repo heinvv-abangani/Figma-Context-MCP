@@ -180,24 +180,6 @@ export function parseFigmaResponse(data: GetFileResponse | GetFileNodesResponse)
   return removeEmptyKeys(simplifiedDesign);
 }
 
-// Helper function to find node by ID
-const findNodeById = (id: string, nodes: SimplifiedNode[]): SimplifiedNode | undefined => {
-  for (const node of nodes) {
-    if (node?.id === id) {
-      return node;
-    }
-
-    if (node?.children && node.children.length > 0) {
-      const foundInChildren = findNodeById(id, node.children);
-      if (foundInChildren) {
-        return foundInChildren;
-      }
-    }
-  }
-
-  return undefined;
-};
-
 /**
  * Find or create global variables
  * @param globalVars - Global variables object

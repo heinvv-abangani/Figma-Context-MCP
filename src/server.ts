@@ -13,8 +13,46 @@ const transports = {
   sse: {} as Record<string, SSEServerTransport>,
 };
 
+const corsMiddleware = (req: Request, res: Response, next: () => void) => {
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3001", 
+    "http://localhost:8080",
+    "https://cursor.sh",
+    "https://www.cursor.sh"
+  ];
+  
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  
+  if (req.method === "OPTIONS") {
+    res.status(200).end();
+    return;
+  }
+  
+  next();
+};
+
 export async function startHttpServer(port: number, mcpServer: McpServer): Promise<void> {
   const app = express();
+
+  app.use(corsMiddleware);
+
+  app.get("/health", (req, res) => {
+    res.status(200).json({ 
+      status: "healthy", 
+      timestamp: new Date().toISOString(),
+      version: process.env.NPM_PACKAGE_VERSION || "unknown"
+    });
+  });
+
+  app.use("/api", (await import("./routes/api.js")).default);
 
   // Parse JSON requests for the Streamable HTTP endpoint only, will break SSE endpoint
   app.use("/mcp", express.json());

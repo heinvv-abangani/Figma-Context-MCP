@@ -90,6 +90,9 @@ export function getServerConfig(isStdioMode: boolean): ServerConfig {
   } else if (process.env.PORT) {
     config.port = parseInt(process.env.PORT, 10);
     config.configSources.port = "env";
+  } else if (process.env.NODE_ENV === "production") {
+    config.port = 10000;
+    config.configSources.port = "default";
   }
 
   // Validate configuration
@@ -97,6 +100,12 @@ export function getServerConfig(isStdioMode: boolean): ServerConfig {
     console.error(
       "Either FIGMA_API_KEY or FIGMA_OAUTH_TOKEN is required (via CLI argument or .env file)",
     );
+    process.exit(1);
+  }
+
+  // Validate port for production
+  if (process.env.NODE_ENV === "production" && (config.port < 1 || config.port > 65535)) {
+    console.error("Invalid port number for production environment");
     process.exit(1);
   }
 
