@@ -28,4 +28,55 @@ router.get("/config", (req: Request, res: Response) => {
   });
 });
 
+router.get("/debug-figma", async (req: Request, res: Response) => {
+  try {
+    const config = getServerConfig(false);
+    
+    const debugInfo: any = {
+      hasApiKey: !!config.auth.figmaApiKey,
+      hasOAuthToken: !!config.auth.figmaOAuthToken,
+      useOAuth: config.auth.useOAuth,
+      apiKeyLength: config.auth.figmaApiKey ? config.auth.figmaApiKey.length : 0,
+      apiKeyPreview: config.auth.figmaApiKey ? `${config.auth.figmaApiKey.substring(0, 8)}...` : "none"
+    };
+    
+    // Test a simple Figma API call
+    if (config.auth.figmaApiKey) {
+      try {
+        const testFileKey = "hh6URsZQCurNjjOWrb9XQr"; // Public community file
+        const figmaResponse = await fetch(`https://api.figma.com/v1/files/${testFileKey}`, {
+          headers: {
+            'X-Figma-Token': config.auth.figmaApiKey
+          }
+        });
+        
+        debugInfo.figmaApiTest = {
+          status: figmaResponse.status,
+          statusText: figmaResponse.statusText,
+          success: figmaResponse.ok
+        };
+        
+        if (!figmaResponse.ok) {
+          const errorText = await figmaResponse.text();
+          debugInfo.figmaApiTest.error = errorText;
+        } else {
+          debugInfo.figmaApiTest.message = "API key is working!";
+        }
+        
+      } catch (error) {
+        debugInfo.figmaApiTest = {
+          error: error instanceof Error ? error.message : String(error)
+        };
+      }
+    }
+    
+    res.json(debugInfo);
+  } catch (error) {
+    res.status(500).json({
+      error: "Debug failed",
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
 export default router; 
